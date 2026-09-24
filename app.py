@@ -5,6 +5,8 @@ from preprocessing.MatLoader import load_mat_file
 from preprocessing.windowing import create_windows
 from preprocessing.time_features import extract_features
 from preprocessing.frequency_features import extract_frequency_features
+from preprocessing.image_processing import (process_window, create_cnn_input)
+from models.CNN_2D import load_model, predict
 
 from collections import Counter
 import joblib  
@@ -33,6 +35,8 @@ if uploaded_file is not None:
     st.success("Signal extracted successfully!!")
 
     if "signal" in st.session_state:
+        signal = st.session_state["signal"]
+
         windows_2048 = create_windows(signal, window_size=2048)
 
         if windows_2048 is not None:
@@ -62,6 +66,54 @@ if uploaded_file is not None:
             feature_list.append(features)
 
             st.session_state["features"] = feature_list
+
+    if "windows_2048" in st.session_state:
+        signal = st.session_state["signal"]
+
+        windows_1024 = create_windows(signal, window_size=1024, step=1024)
+
+        st.write(f"Numbers of 1024 windows : {len(windows_1024)}")
+
+        if len(windows_1024) > 0:
+            first_window = windows_1024[0]
+
+            gasf_image, gadf_image = process_window(first_window)
+
+            cnn_input = create_cnn_input(gasf_image, gadf_image)
+
+            model_path = "models/Raw_2channel_best_model.pth"
+
+            model, device = load_model(model_path)
+
+            prediction, probabilities = predict(model, device, cnn_input)
+
+            st.subheader("2D CNN Prediction")
+
+            st.write("Predicted Fault : ", prediction)
+
+            st.write(
+                "Confidence : ",
+                f"{probabilities.max()*100:.2f}%"
+            )
+
+            if st.button("Show detail analysis"):
+                for class_name, probability in zip(["Ball", "Inner", "Normal", "Outer"], probabilities):
+                    st.write(f"{class_name}: {probability*100:.2f}%")
+
+                st.write(f"2d cnn input shape : {cnn_input.shape}")
+                st.write(f"2d cnn input type : {cnn_input.dtype}")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.image(gasf_image, caption="Gasf")
+
+                with col2:
+                    st.image(gadf_image, caption="Gadf")
+
+            st.session_state["windows_1024"] = windows_1024
+            st.session_state["gasf_image"] = gasf_image
+            st.session_state["gadf_image"] = gadf_image
 
     if "features" in st.session_state:
         feature_df = pd.DataFrame(st.session_state["features"])
