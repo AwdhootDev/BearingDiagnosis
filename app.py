@@ -1,164 +1,206 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
+import torch
+import joblib 
+import plotly.express as px
+from collections import Counter
+import importlib
+
 from preprocessing.MatLoader import load_mat_file
 from preprocessing.windowing import create_windows
 from preprocessing.time_features import extract_features
 from preprocessing.frequency_features import extract_frequency_features
-from preprocessing.image_processing import (process_window, create_cnn_input)
-from models.CNN_2D import load_model, predict
+from preprocessing.image_processing import process_window, create_cnn_input
 
-from collections import Counter
-import joblib  
-import plotly.express as px
+from models.CNN_2D import load_model as load_2d_model, predict as predict_2d
+from models.msdc_dense import MSDCDenseTCN 
+from models.CNN_1D import FaultDetectionCNN
 
 @st.cache_resource
-def load_xgb_model():
-    MODEL_PATH = "models\\xgb_model.joblib" 
-    model = joblib.load(MODEL_PATH)
-    return model
+def load_ml_models():
+    xgb_model = joblib.load("models/xgb_combined_model.joblib") 
+    rf_model = joblib.load("models/rf_combined_model.joblib") 
+    svm_model = joblib.load("models/svm_combined_model.joblib") 
+    svm_scaler = joblib.load("models/svm_scaler.joblib") 
+    return xgb_model, rf_model, svm_model, svm_scaler
 
-st.title("Bearing Fault Diagnosis")
-st.write("Upload a vibration signal .mat file for analysis")
+@st.cache_resource
+def load_dl_models():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model_1d = FaultDetectionCNN(num_classes=4).to(device) 
+    checkpoint_1d = torch.load("models/mixed_fault_detection_1dcnn.pth", map_location=device)
+    state_dict_1d = checkpoint_1d.get("model_state_dict", checkpoint_1d)
+    model_1d.load_state_dict(state_dict_1d)
+    model_1d.eval()
+
+    model_tcn = MSDCDenseTCN(num_classes=4).to(device) 
+    model_tcn.load_state_dict(torch.load("models/best_mixed_msdc_densetcn (1).pth", map_location=device)) 
+    model_tcn.eval()
+    
+    return model_1d, model_tcn, device
+
+@st.cache_resource
+def load_2d_cnn():
+    return load_2d_model("models/Raw_2channel_best_model.pth") 
+
+def run_dl_inference(model, device, windows_array):
+    inputs = torch.tensor(windows_array, dtype=torch.float32).unsqueeze(1).to(device)
+    with torch.no_grad():
+        outputs = model(inputs)
+        _, preds = torch.max(outputs, 1)
+    return preds.cpu().numpy()
+
+label_map = {
+    0: "Normal",
+    1: "Ball Fault",
+    2: "Inner race",
+    3: "Outer race"
+}
+
+tcn_label_map = {
+    0: "Normal",
+    1: "Inner race",
+    2: "Outer race",
+    3: "Ball Fault"
+}
+
+def standardize_2d_label(val):
+    val_str = str(val).strip().lower()
+    if "normal" in val_str or "healthy" in val_str:
+        return "Normal"
+    elif "ball" in val_str:
+        return "Ball Fault"
+    elif "inner" in val_str:
+        return "Inner race"
+    elif "outer" in val_str:
+        return "Outer race"
+    return "Unknown"
+
+st.set_page_config(page_title="Bearing Fault Diagnosis", layout="wide")
+st.title("Bearing Fault Diagnosis Platform")
+st.write("Upload a raw vibration signal `.mat` file to run multi-model inference.")
 
 uploaded_file = st.file_uploader("Upload MATLAB (.mat) file", type=["mat"])
 
 if uploaded_file is not None:
-
     signal = load_mat_file(uploaded_file)
+    st.success(f"Loaded: `{uploaded_file.name}` (Signal shape: {signal.shape})")
 
-    st.write(f"Signal shape : {signal.shape}")
+    windows_2048 = create_windows(signal, window_size=2048) 
+    windows_1024 = create_windows(signal, window_size=1024, step=1024) 
 
-    st.success(f"File uploaded: {uploaded_file.name}")
+    st.subheader("1. Signal Visualization")
+    if windows_2048 is not None and len(windows_2048) > 0:
+        fig, ax = plt.subplots(figsize=(10, 2.5))
+        ax.plot(windows_2048[0], color="#1f77b4", linewidth=0.8)
+        ax.set_xlabel("Sample Point")
+        ax.set_ylabel("Amplitude")
+        ax.set_title("Vibration Signal Sample (Window Size: 2048)")
+        st.pyplot(fig)
 
-    st.session_state["signal"] = signal
-    st.success("Signal extracted successfully!!")
+    if len(windows_1024) > 0:
+        first_gasf, first_gadf = process_window(windows_1024[0]) 
+        
+        with st.expander("Preview 2D GAF Transformation (Window Size: 1024)", expanded=False):
+            col_img1, col_img2 = st.columns(2)
+            with col_img1:
+                st.image(first_gasf, caption="GASF (Gramian Angular Summation Field)", use_container_width=True)
+            with col_img2:
+                st.image(first_gadf, caption="GADF (Gramian Angular Difference Field)", use_container_width=True)
 
-    if "signal" in st.session_state:
-        signal = st.session_state["signal"]
-
-        windows_2048 = create_windows(signal, window_size=2048)
-
-        if windows_2048 is not None:
-            fig, ax = plt.subplots(figsize=(12, 4))
-
-            ax.plot(windows_2048[0])
-            ax.set_xlabel("Sample")
-            ax.set_ylabel("Amplitude")
-            ax.set_title("Vibration signal")
-
-            st.pyplot(fig)
-
-        st.write("2048 windows : ", windows_2048.shape)
-        st.session_state["windows_2048"] = windows_2048
-        st.success("windows created succesfully!!")
-
-    if "windows_2048" in st.session_state:
-        windows = st.session_state["windows_2048"]
-
+    st.subheader("2. Extracted Features (for ML Models)")
+    with st.spinner("Extracting time & frequency features..."):
         feature_list = []
+        for window in windows_2048:
+            t_feat = extract_features(window)
+            f_feat = extract_frequency_features(window)
+            feature_list.append({**t_feat, **f_feat})
+        feature_df = pd.DataFrame(feature_list)
 
-        for window in windows:
-            time_features = extract_features(window)
-            freq_features = extract_frequency_features(window)
+    st.dataframe(feature_df.head(), use_container_width=True)
+    st.caption(f"Total 2048-Windows: {len(windows_2048)} | Total 1024-Windows: {len(windows_1024)}")
 
-            features = {**time_features, **freq_features}
-            feature_list.append(features)
+    st.divider()
 
-            st.session_state["features"] = feature_list
+    if st.button("🚀 Analyze Signal", type="primary"):
+        progress_bar = st.progress(0, text="Initializing model pipelines...")
 
-    if "windows_2048" in st.session_state:
-        signal = st.session_state["signal"]
+        progress_bar.progress(10, text="Loading models...")
+        xgb_model, rf_model, svm_model, svm_scaler = load_ml_models() 
+        cnn_1d_model, tcn_model, dl_device = load_dl_models() 
+        cnn_2d_model, dl_2d_device = load_2d_cnn() 
 
-        windows_1024 = create_windows(signal, window_size=1024, step=1024)
+        progress_bar.progress(30, text="Running XGBoost, Random Forest, and SVM...")
+        scaled_features = svm_scaler.transform(feature_df) 
+        xgb_preds = xgb_model.predict(feature_df)
+        rf_preds = rf_model.predict(feature_df)
+        svm_preds = svm_model.predict(scaled_features)
 
-        st.write(f"Numbers of 1024 windows : {len(windows_1024)}")
+        progress_bar.progress(60, text="Running 1D CNN and DenseTCN...")
+        cnn1d_preds = run_dl_inference(cnn_1d_model, dl_device, windows_2048)
+        tcn_preds = run_dl_inference(tcn_model, dl_device, windows_2048)
 
-        if len(windows_1024) > 0:
-            first_window = windows_1024[0]
+        progress_bar.progress(80, text="Running 2D CNN on GAF representations...")
+        cnn2d_raw_preds = []
+        for w in windows_1024:
+            gasf_img, gadf_img = process_window(w)
+            cnn_in = create_cnn_input(gasf_img, gadf_img)
+            pred, _ = predict_2d(cnn_2d_model, dl_2d_device, cnn_in)
+            cnn2d_raw_preds.append(pred)
 
-            gasf_image, gadf_image = process_window(first_window)
+        progress_bar.progress(100, text="Aggregating predictions...")
+        progress_bar.empty()
 
-            cnn_input = create_cnn_input(gasf_image, gadf_image)
+        model_results = {
+            "XGBoost": [label_map.get(int(p), "Unknown") for p in xgb_preds],
+            "Random Forest": [label_map.get(int(p), "Unknown") for p in rf_preds],
+            "SVM": [label_map.get(int(p), "Unknown") for p in svm_preds],
+            "1D CNN": [label_map.get(int(p), "Unknown") for p in cnn1d_preds],
+            "DenseTCN": [tcn_label_map.get(int(p), "Unknown") for p in tcn_preds], 
+            "2D CNN": [standardize_2d_label(p) for p in cnn2d_raw_preds]
+        }
 
-            model_path = "models/Raw_2channel_best_model.pth"
+        st.subheader("Model Diagnostic Breakdown")
+        cols = st.columns(len(model_results))
 
-            model, device = load_model(model_path)
+        all_preds = []
+        for col, (model_name, preds) in zip(cols, model_results.items()):
+            all_preds.extend(preds)
+            pred_counts = Counter(preds)
+            majority_fault = pred_counts.most_common(1)[0][0]
+            confidence = (pred_counts.most_common(1)[0][1] / len(preds)) * 100
 
-            prediction, probabilities = predict(model, device, cnn_input)
+            with col:
+                st.markdown(f"**{model_name}**")
+                if "Normal" in majority_fault:
+                    st.success(majority_fault)
+                else:
+                    st.error(majority_fault)
+                st.caption(f"Agreement: {confidence:.1f}%")
 
-            st.subheader("2D CNN Prediction")
+        global_counts = Counter(all_preds)
+        final_diagnosis = global_counts.most_common(1)[0][0]
+        final_confidence = (global_counts.most_common(1)[0][1] / len(all_preds)) * 100
 
-            st.write("Predicted Fault : ", prediction)
+        st.divider()
+        st.subheader("Final System Diagnosis")
 
-            st.write(
-                "Confidence : ",
-                f"{probabilities.max()*100:.2f}%"
-            )
-
-            if st.button("Show detail analysis"):
-                for class_name, probability in zip(["Ball", "Inner", "Normal", "Outer"], probabilities):
-                    st.write(f"{class_name}: {probability*100:.2f}%")
-
-                st.write(f"2d cnn input shape : {cnn_input.shape}")
-                st.write(f"2d cnn input type : {cnn_input.dtype}")
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.image(gasf_image, caption="Gasf")
-
-                with col2:
-                    st.image(gadf_image, caption="Gadf")
-
-            st.session_state["windows_1024"] = windows_1024
-            st.session_state["gasf_image"] = gasf_image
-            st.session_state["gadf_image"] = gadf_image
-
-    if "features" in st.session_state:
-        feature_df = pd.DataFrame(st.session_state["features"])
-        st.dataframe(feature_df.head(), use_container_width=True)
-
-    if st.button("Analyze Signal"):
-        st.info("Running XGBoost analysis .......")
-
-        feature_df = pd.DataFrame(st.session_state["features"])
-        model = load_xgb_model()
-
-        predictions = model.predict(feature_df)
-
-        label_map = {
-                    0: "Normal",
-                    1: "Ball Fault",
-                    2: "Inner race",
-                    3: "Outer race"
-                }
-
-        mapped_preds = [label_map.get(int(pred), f"Unknown Fault ({pred})") for pred in predictions]
-        pred_counts = Counter(mapped_preds)
-        majority_diagnosis = pred_counts.most_common(1)[0][0]
-        confidence = (pred_counts.most_common(1)[0][1] / len(predictions)) * 100
-
-        st.subheader("Diagnosis Results")
-        if "Normal" in majority_diagnosis:
-                st.success(f"Final Diagnosis: **{majority_diagnosis}** (Confidence: {confidence:.1f}%)")
+        if "Normal" in final_diagnosis:
+            st.success(f"### Final Diagnosis: **{final_diagnosis}** (Confidence: {final_confidence:.1f}%)")
         else:
-            st.error(f"Final Diagnosis: **{majority_diagnosis}** (Confidence: {confidence:.1f}%)")
+            st.error(f"### Final Diagnosis: **{final_diagnosis}** (Confidence: {final_confidence:.1f}%)")
 
-        pred_df = pd.DataFrame(mapped_preds, columns=["Predicted Class"])
-        st.write("### Prediction Distribution Across Windows")
-
-        count_df = pd.DataFrame(list(pred_counts.items()), columns=["Fault Type", "Number of Windows"])
-
+        count_df = pd.DataFrame(list(global_counts.items()), columns=["Fault Type", "Aggregated Votes"])
         fig = px.pie(
-            count_df, 
-            values="Number of Windows", 
+            count_df,
+            values="Aggregated Votes",
             names="Fault Type",
-            hole=0.5, # This creates the donut hole
+            hole=0.5,
             color_discrete_sequence=px.colors.qualitative.Pastel
         )
-
         fig.update_traces(textposition='inside', textinfo='percent+label')
-        fig.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
-
+        fig.update_layout(showlegend=True, margin=dict(t=10, b=10, l=10, r=10))
         st.plotly_chart(fig, use_container_width=True)
