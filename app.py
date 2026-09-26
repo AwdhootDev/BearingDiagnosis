@@ -94,7 +94,7 @@ tcn_label_map = {
 
 def standardize_2d_label(val):
     val_str = str(val).strip().lower()
-    if "normal" in val_str or "healthy" in val_str:
+    if "normal" in val_str or "healthy"  in val_str or "baseline" in val_str:
         return "Normal"
     elif "ball" in val_str:
         return "Ball Fault"
@@ -206,8 +206,8 @@ st.write("Upload a raw vibration signal `.mat` file to run multi-model inference
 uploaded_file = st.file_uploader("Upload MATLAB (.mat) file", type=["mat"])
 
 if uploaded_file is not None:
-    signal = load_mat_file(uploaded_file)
-    st.success(f"Loaded: `{uploaded_file.name}` (Signal shape: {signal.shape})")
+    signal, sr = load_mat_file(uploaded_file)
+    st.success(f"Loaded: `{uploaded_file.name}` (Signal shape: {signal.shape}, Sampling Rate: {sr} Hz)")
 
     windows_2048 = create_windows(signal, window_size=2048) 
     windows_1024 = create_windows(signal, window_size=1024, step=1024) 
@@ -234,9 +234,10 @@ if uploaded_file is not None:
     st.subheader("2. Extracted Features (for ML Models)")
     with st.spinner("Extracting time & frequency features..."):
         feature_list = []
-        for window in windows_2048:
+        windows_for_ml = windows_1024 if sr != 12000 else windows_2048
+        for window in windows_for_ml:
             t_feat = extract_features(window)
-            f_feat = extract_frequency_features(window)
+            f_feat = extract_frequency_features(window, sr)
             feature_list.append({**t_feat, **f_feat})
         feature_df = pd.DataFrame(feature_list)
 
@@ -280,7 +281,7 @@ if uploaded_file is not None:
             "XGBoost": [label_map.get(int(p), "Unknown") for p in xgb_preds],
             "Random Forest": [label_map.get(int(p), "Unknown") for p in rf_preds],
             "SVM": [label_map.get(int(p), "Unknown") for p in svm_preds],
-            "1D CNN": [label_map.get(int(p), "Unknown") for p in cnn1d_preds],
+            "1D CNN": [tcn_label_map.get(int(p), "Unknown") for p in cnn1d_preds],
             "DenseTCN": [tcn_label_map.get(int(p), "Unknown") for p in tcn_preds], 
             "2D CNN": [standardize_2d_label(p) for p in cnn2d_raw_preds],
             "LSTM" : [label_map.get(int(p), "Unknown") for p in lstm_preds],

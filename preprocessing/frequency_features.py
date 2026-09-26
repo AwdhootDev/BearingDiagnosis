@@ -1,9 +1,7 @@
 import numpy as np 
 from scipy.stats import entropy
 
-def extract_frequency_features(window):
-    sampling_rate = 12000
-
+def extract_frequency_features(window, sampling_rate=12000):
     fft = np.fft.rfft(window)
     magnitude = np.abs(fft)
 
