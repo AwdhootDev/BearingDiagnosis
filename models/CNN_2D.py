@@ -50,7 +50,7 @@ CLASS_NAMES = [
     "Ball", "Inner", "Normal", "Outer"
 ]
 
-def load_model(model_path):
+def load_model_cnn2d(model_path):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = FaultDiagnosis().to(device)
@@ -61,7 +61,7 @@ def load_model(model_path):
 
     return model, device
 
-def predict(model, device, image_tensor):
+def predict_cnn2d(model, device, image_tensor):
     image_tensor = image_tensor.to(device)
 
     with torch.no_grad():
