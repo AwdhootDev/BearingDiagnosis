@@ -104,6 +104,101 @@ def standardize_2d_label(val):
         return "Outer race"
     return "Unknown"
 
+st.title("Kurtosis")
+st.caption(
+    "AI-powered vibration signal analysis for automated bearing condition monitoring"
+)
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.info("**Signal Analysis**\n\n"
+            "Processes raw vibration signals for fault diagnosis.")
+
+with col2:
+    st.info("**Machine Learning**\n\n"
+            "Uses Random forest, XgBoost and SVM.")
+
+with col3:
+    st.info("**Deep Learning**\n\n"
+            "Uses CNN, LSTM, Dense TCNs and TCN-Attention models.")
+
+with col4:
+    st.info("**Fault Classification**\n\n"
+            "Identifies the predicted bearing condition.")
+
+st.divider()
+
+with st.expander("About the Project"):
+    st.subheader("What are Bearings ? ")
+    st.write("""
+    Bearings are mechanical components that support rotating shafts 
+    and allow them to rotate smoothly with minimal friction. 
+    They are used in almost every machine that contains rotating parts—such as motors, 
+    pumps, gearboxes, turbines, compressors, and industrial machinery.
+
+    A bearing typically consists of components such as:\n
+
+    Inner race — rotates with the shaft\n
+    Outer race — usually remains stationary\n
+    Rolling elements — balls or rollers that allow smooth rotation\n
+    Cage — maintains the spacing between rolling elements
+    """)
+
+    st.subheader("Why are bearing faults a problem ?")
+    st.write("""
+    Bearings operate under continuous mechanical load, friction, vibration, 
+    and changing operating conditions. Over time, components can develop defects such as:
+
+    Inner-race faults
+    Outer-race faults
+    Ball/rolling-element faults
+    Wear, cracks, pitting, or surface damage
+
+    A small defect can initially produce only subtle changes in the machine's vibration signal. 
+    If the defect continues to develop, it can increase vibration, reduce efficiency, 
+    damage other components, and eventually cause unexpected machine downtime or failure.
+
+    That's why condition monitoring and early fault detection are important.
+    """)
+
+    st.subheader("Why Bearing Fault Detection?")
+    st.write("""
+    Bearings are essential components in rotating machinery, supporting shafts 
+    and enabling smooth, low-friction motion. They are widely used in motors, 
+    pumps, gearboxes, turbines, and other industrial systems. 
+    Because bearings operate continuously under mechanical loads and vibration, 
+    they are susceptible to defects such as inner-race, outer-race, and rolling-element faults.
+
+    A developing bearing fault can initially produce subtle changes in the 
+    machine's vibration pattern. If left undetected, the defect may progress 
+    and eventually lead to equipment damage, unplanned downtime, and costly maintenance. 
+    Therefore, monitoring bearing condition and identifying faults at an early stage is an important part of predictive maintenance.
+
+    Our system analyzes vibration signals and uses deep learning to automatically identify bearing conditions. By learning patterns associated with different fault types, the system provides an automated approach to bearing condition monitoring and fault classification.
+    """)
+
+with st.expander("Processing Pipeline"):
+    st.markdown("""
+    **Raw Vibration Signal**
+    → **Preprocessing**
+    → **Signal Representation**
+    → **Deep Learning Model or Machine learning models**
+    → **Fault Prediction**
+    """)
+
+with st.expander("Models Used"):
+    st.markdown("""
+    - **XgBoost:** Ensemble learning on features of signal
+    - **Random Forest:** Ensemble learning on features of signal
+    - **Support vector machine:** 
+    - **1D CNN:** Temporal modelling
+    - **Dense TCN:** Temporal modelling 
+    - **2D CNN:** Spatial pattern learning from GAF/GADF images
+    - **LSTM:** Temporal sequence modelling
+    - **TCN + Attention:** Temporal modelling with attention-based feature selection
+    """)
+
 st.set_page_config(page_title="Bearing Fault Diagnosis", layout="wide")
 st.title("Bearing Fault Diagnosis Platform")
 st.write("Upload a raw vibration signal `.mat` file to run multi-model inference.")
