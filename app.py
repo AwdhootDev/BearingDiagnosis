@@ -14,9 +14,11 @@ from preprocessing.time_features import extract_features
 from preprocessing.frequency_features import extract_frequency_features
 from preprocessing.image_processing import process_window, create_cnn_input
 
-from models.CNN_2D import load_model as load_2d_model, predict as predict_2d
+from models.CNN_2D import load_model_cnn2d as load_2d_model, predict_cnn2d as predict_2d
 from models.msdc_dense import MSDCDenseTCN 
 from models.CNN_1D import FaultDetectionCNN
+from models.LSTM import BearingLSTM
+from models.TCN_ATTENTION import TCNAttention
 
 @st.cache_resource
 def load_ml_models():
@@ -39,8 +41,16 @@ def load_dl_models():
     model_tcn = MSDCDenseTCN(num_classes=4).to(device) 
     model_tcn.load_state_dict(torch.load("models/best_mixed_msdc_densetcn (1).pth", map_location=device)) 
     model_tcn.eval()
+
+    model_lstm = BearingLSTM(num_classes=4).to(device)
+    model_lstm.load_state_dict(torch.load("models/Raw_CWRU_MFPT_best_LSTM_weights.pth", map_location=device))
+    model_lstm.eval()
+
+    model_ta = TCNAttention(num_classes=4).to(device)
+    model_ta.load_state_dict(torch.load("models/Raw_CWRU_MFPT_best_TCN&Attention_weights.pth", map_location=device))
+    model_ta.eval()
     
-    return model_1d, model_tcn, device
+    return model_1d, model_tcn, model_lstm, model_ta, device
 
 @st.cache_resource
 def load_2d_cnn():
@@ -52,6 +62,21 @@ def run_dl_inference(model, device, windows_array):
         outputs = model(inputs)
         _, preds = torch.max(outputs, 1)
     return preds.cpu().numpy()
+
+def run_dl_inference2(model, device, windows_array):
+    windows_array = windows_array[:, :, np.newaxis]
+    inputs = torch.tensor(windows_array, dtype=torch.float32).to(device)
+    with torch.no_grad():
+        outputs = model(inputs)
+        _, preds = torch.max(outputs, 1)
+    return preds.cpu().numpy()
+
+cnn2d_label_map = {
+    0: "Ball",
+    1: "Inner",
+    2: "Normal",
+    3: "Outer"
+}
 
 label_map = {
     0: "Normal",
@@ -130,8 +155,8 @@ if uploaded_file is not None:
 
         progress_bar.progress(10, text="Loading models...")
         xgb_model, rf_model, svm_model, svm_scaler = load_ml_models() 
-        cnn_1d_model, tcn_model, dl_device = load_dl_models() 
-        cnn_2d_model, dl_2d_device = load_2d_cnn() 
+        cnn_1d_model, tcn_model, lstm_model, ta_model, dl_device = load_dl_models() 
+        cnn_2d_model, dl_2d_device = load_2d_cnn()
 
         progress_bar.progress(30, text="Running XGBoost, Random Forest, and SVM...")
         scaled_features = svm_scaler.transform(feature_df) 
@@ -142,6 +167,8 @@ if uploaded_file is not None:
         progress_bar.progress(60, text="Running 1D CNN and DenseTCN...")
         cnn1d_preds = run_dl_inference(cnn_1d_model, dl_device, windows_2048)
         tcn_preds = run_dl_inference(tcn_model, dl_device, windows_2048)
+        lstm_preds = run_dl_inference2(lstm_model, dl_device, windows_2048)
+        ta_preds = run_dl_inference2(ta_model, dl_device, windows_2048)
 
         progress_bar.progress(80, text="Running 2D CNN on GAF representations...")
         cnn2d_raw_preds = []
@@ -160,7 +187,9 @@ if uploaded_file is not None:
             "SVM": [label_map.get(int(p), "Unknown") for p in svm_preds],
             "1D CNN": [label_map.get(int(p), "Unknown") for p in cnn1d_preds],
             "DenseTCN": [tcn_label_map.get(int(p), "Unknown") for p in tcn_preds], 
-            "2D CNN": [standardize_2d_label(p) for p in cnn2d_raw_preds]
+            "2D CNN": [standardize_2d_label(p) for p in cnn2d_raw_preds],
+            "LSTM" : [label_map.get(int(p), "Unknown") for p in lstm_preds],
+            "TCN AND ATTENTION" : [label_map.get(int(p), "Unknown") for p in ta_preds]
         }
 
         st.subheader("Model Diagnostic Breakdown")

@@ -9,4 +9,10 @@ def load_mat_file(uploaded_file):
             signal = data[key].flatten()
             break
 
+        elif "bearing" in key:
+            mat_key = key
+            signal = data[mat_key]
+            signal = signal["gs"][0, 0].squeeze()
+            break
+
     return signal
