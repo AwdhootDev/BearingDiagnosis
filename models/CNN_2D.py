@@ -47,7 +47,7 @@ class FaultDiagnosis(nn.Module):
     return x
 
 CLASS_NAMES = [
-    "Ball", "Inner", "Normal", "Outer"
+    "Normal","Ball", "Inner" , "Outer"
 ]
 
 def load_model(model_path):
